@@ -1,4 +1,4 @@
-﻿from ai_client import client as _fallback_client
+﻿from ai_client import client as _fallback_client, GROQ_MODEL
 #!/usr/bin/env python3
 """
 AI Tutor MCP Server
