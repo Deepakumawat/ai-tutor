@@ -4,10 +4,8 @@
     env: python
     region: oregon
     plan: free
-    buildCommand: |
-      pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
-    startCommand: |
-      cd backend && uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    startCommand: cd backend && uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
         sync: false
@@ -21,6 +19,8 @@
         sync: false
       - key: PYTHON_VERSION
         value: "3.11.0"
+      - key: NODE_VERSION
+        value: "18"
     disk:
       name: ai-tutor-storage
       mountPath: /var/data
