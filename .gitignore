@@ -43,6 +43,9 @@ env/
 node_modules/
 npm-debug.log
 yarn-error.log
+# Keep frontend/dist committed so Render doesn't need to rebuild it
+!frontend/dist
+!frontend/dist/**
 
 # OS
 Thumbs.db

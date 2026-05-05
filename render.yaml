@@ -21,7 +21,5 @@
         value: "3.11.0"
       - key: NODE_VERSION
         value: "18"
-    disk:
-      name: ai-tutor-storage
-      mountPath: /var/data
-      sizeGB: 1
+      - key: RENDER_EXTERNAL_URL
+        sync: false
