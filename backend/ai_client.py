@@ -1,4 +1,4 @@
-﻿import os
+import os
 from openai import OpenAI
 
 # ── Groq (primary — fast & free) ──────────────────────────────────────────────
@@ -12,19 +12,16 @@ GEMINI_MODEL = "gemini-2.0-flash"
 
 _groq = OpenAI(api_key=GROQ_KEY, base_url=GROQ_URL) if GROQ_KEY else None
 
-# Native Gemini client with Search Grounding
-_gemini_model = None
+# Native Gemini client (new google-genai SDK)
+_gemini = None
 try:
-    import google.generativeai as genai
+    from google import genai as _genai
+    from google.genai import types as _gtypes
     if GEMINI_KEY:
-        genai.configure(api_key=GEMINI_KEY)
-        _gemini_model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            tools=["google_search_retrieval"],   # Search Grounding
-        )
+        _gemini = _genai.Client(api_key=GEMINI_KEY)
         print("[ai_client] Gemini 2.0 Flash + Search Grounding ready")
 except ImportError:
-    print("[ai_client] google-generativeai not installed — Gemini unavailable")
+    print("[ai_client] google-genai not installed — Gemini unavailable")
 except Exception as e:
     print(f"[ai_client] Gemini init error: {e}")
 
@@ -35,11 +32,23 @@ def _gemini_compat_response(text):
         content = text
         role    = "assistant"
     class _Choice:
-        message      = _Msg()
+        message       = _Msg()
         finish_reason = "stop"
     class _Resp:
         choices = [_Choice()]
     return _Resp()
+
+
+def _gemini_generate(prompt: str) -> str:
+    config = _gtypes.GenerateContentConfig(
+        tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())]
+    )
+    resp = _gemini.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=config,
+    )
+    return resp.text
 
 
 # ── Drop-in client (client.chat.completions.create) ───────────────────────────
@@ -47,7 +56,6 @@ class _Completions:
     def create(self, *, model=None, messages=None, timeout=None, **kwargs):
         msgs = messages or []
 
-        # 1. Try Groq (10s timeout)
         if _groq:
             try:
                 return _groq.chat.completions.create(
@@ -59,15 +67,13 @@ class _Completions:
             except Exception as e:
                 print(f"[ai_client] Groq failed ({type(e).__name__}), using Gemini...")
 
-        # 2. Fallback: Gemini with Search Grounding
-        if _gemini_model:
+        if _gemini:
             prompt = "\n".join(
                 f"{m['role'].upper()}: {m['content']}"
                 for m in msgs
                 if isinstance(m.get("content"), str)
             )
-            resp = _gemini_model.generate_content(prompt)
-            return _gemini_compat_response(resp.text)
+            return _gemini_compat_response(_gemini_generate(prompt))
 
         raise RuntimeError("No AI provider — set GROQ_API_KEY or GEMINI_API_KEY")
 
@@ -87,18 +93,14 @@ class FallbackClient:
 
 # ── Stateful ChatSession (Interactions API) ───────────────────────────────────
 class ChatSession:
-    """
-    Multi-turn conversation with automatic memory.
-    Uses Groq history array; falls back to Gemini native chat session.
-    """
+    """Multi-turn conversation with automatic memory."""
     def __init__(self, system_prompt: str = "You are a helpful AI assistant."):
         self.history = [{"role": "system", "content": system_prompt}]
-        self._gemini_chat = _gemini_model.start_chat() if _gemini_model else None
+        self._gemini_chat = _gemini.chats.create(model=GEMINI_MODEL) if _gemini else None
 
     def send(self, user_message: str) -> str:
         self.history.append({"role": "user", "content": user_message})
 
-        # Try Groq with full history
         if _groq:
             try:
                 resp = _groq.chat.completions.create(
@@ -112,7 +114,6 @@ class ChatSession:
             except Exception as e:
                 print(f"[ChatSession] Groq failed: {e}")
 
-        # Gemini native stateful chat
         if self._gemini_chat:
             resp  = self._gemini_chat.send_message(user_message)
             reply = resp.text
@@ -122,42 +123,39 @@ class ChatSession:
         raise RuntimeError("No AI provider available")
 
     def clear(self):
-        system = self.history[:1]
-        self.history = system
-        if _gemini_model:
-            self._gemini_chat = _gemini_model.start_chat()
+        self.history = self.history[:1]
+        if _gemini:
+            self._gemini_chat = _gemini.chats.create(model=GEMINI_MODEL)
 
 
 # ── Function Calling helper ───────────────────────────────────────────────────
 def call_with_tools(prompt: str, tools: list, system: str = "") -> str:
-    """
-    Run prompt with function/tool calling via Gemini.
-    tools: list of genai.protos.Tool or plain dicts with name/description/parameters
-    Returns the final text response after tool execution.
-    """
-    if not _gemini_model:
-        # Fall back to plain Groq if Gemini unavailable
-        if _groq:
-            resp = _groq.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=15,
+    """Run prompt with Gemini function calling; falls back to Groq plain text."""
+    if _gemini:
+        try:
+            from google.genai import types as _gt
+            config = _gt.GenerateContentConfig(
+                tools=tools,
+                system_instruction=system or "You are a helpful AI assistant.",
             )
-            return resp.choices[0].message.content
-        raise RuntimeError("No provider for function calling")
+            resp = _gemini.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config=config,
+            )
+            return resp.text
+        except Exception as e:
+            print(f"[call_with_tools] Gemini error: {e}")
 
-    try:
-        import google.generativeai as genai
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            tools=tools,
-            system_instruction=system or "You are a helpful AI assistant.",
+    if _groq:
+        resp = _groq.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=15,
         )
-        resp = model.generate_content(prompt)
-        return resp.text
-    except Exception as e:
-        print(f"[call_with_tools] error: {e}")
-        return ""
+        return resp.choices[0].message.content
+
+    raise RuntimeError("No provider for function calling")
 
 
 # Singleton — import this everywhere

@@ -9,11 +9,10 @@ Features:
 """
 
 import json
-from openai import OpenAI
 
 class NLPEngine:
     def __init__(self):
-        self.client = _fallback_client, base_url="https://api.groq.com/openai/v1")
+        self.client = _fallback_client
         self.model = "llama-3.3-70b-versatile"
 
     def analyze_question(self, question: str, context: str = "") -> dict:
