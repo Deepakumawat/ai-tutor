@@ -414,38 +414,35 @@ async def mcp_call(request: MCPCallRequest):
         return {"error": f"Unknown tool: {tool_name}"}
 
 # ═══════════════════════════════════════════════════════════════════════════
-# IMAGE GENERATION (Imagen 3 primary, Pollinations free fallback)
+# IMAGE GENERATION (Pollinations.ai — 100% free, no API key)
 # ═══════════════════════════════════════════════════════════════════════════
+
+import urllib.parse
+import random
 
 class ImageGenerationRequest(BaseModel):
     prompt: str
 
 @app.post("/api/generate-image")
 async def generate_image(request: ImageGenerationRequest):
-    """Generate a 3D-cartoon educational image. Tries Google Imagen 3 first;
-    if unavailable (e.g. free Gemini key), the frontend falls back to Pollinations."""
-    art_style = (
-        f"Chibi 3D vector illustration, Pixar-style character design, bright vibrant "
-        f"colors, plain soft background, educational textbook art of: {request.prompt}"
-    )
+    """Generates 3D cartoon educational images 100% free via Pollinations.ai."""
     try:
-        from ai_client import _gemini
-        if not _gemini:
-            return {"success": False, "error": "Imagen unavailable (no Gemini client)"}
+        print(f"🎨 Drawing a cute image for prompt: {request.prompt}")
 
-        result = _gemini.models.generate_images(
-            model="imagen-3.0-generate-001",
-            prompt=art_style,
-            config=dict(number_of_images=1, aspect_ratio="16:9", output_mime_type="image/jpeg"),
+        art_style_prompt = (
+            f"Cute 3D Pixar cartoon, educational illustration, bright vibrant colors, "
+            f"clean background: {request.prompt}"
         )
-        import base64
-        image_bytes = result.generated_images[0].image.image_bytes
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        return {"success": True, "image_url": f"data:image/jpeg;base64,{b64}"}
+        safe_prompt = urllib.parse.quote(art_style_prompt)
+        seed = random.randint(1, 100000)
+        image_url = (
+            f"https://image.pollinations.ai/prompt/{safe_prompt}"
+            f"?width=800&height=450&seed={seed}&nologo=true"
+        )
+        return {"success": True, "image_url": image_url}
     except Exception as e:
-        # Frontend will fall back to free Pollinations.ai on success:false
-        print(f"[generate-image] Imagen 3 failed, frontend will use fallback: {e}")
-        return {"success": False, "error": str(e)[:150]}
+        print(f"[ERROR] Free image generation failed: {e}")
+        return {"success": False, "error": str(e)}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CHAT HISTORY & USAGE TRACKING
