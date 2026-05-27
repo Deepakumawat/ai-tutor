@@ -414,6 +414,40 @@ async def mcp_call(request: MCPCallRequest):
         return {"error": f"Unknown tool: {tool_name}"}
 
 # ═══════════════════════════════════════════════════════════════════════════
+# IMAGE GENERATION (Imagen 3 primary, Pollinations free fallback)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class ImageGenerationRequest(BaseModel):
+    prompt: str
+
+@app.post("/api/generate-image")
+async def generate_image(request: ImageGenerationRequest):
+    """Generate a 3D-cartoon educational image. Tries Google Imagen 3 first;
+    if unavailable (e.g. free Gemini key), the frontend falls back to Pollinations."""
+    art_style = (
+        f"Chibi 3D vector illustration, Pixar-style character design, bright vibrant "
+        f"colors, plain soft background, educational textbook art of: {request.prompt}"
+    )
+    try:
+        from ai_client import _gemini
+        if not _gemini:
+            return {"success": False, "error": "Imagen unavailable (no Gemini client)"}
+
+        result = _gemini.models.generate_images(
+            model="imagen-3.0-generate-001",
+            prompt=art_style,
+            config=dict(number_of_images=1, aspect_ratio="16:9", output_mime_type="image/jpeg"),
+        )
+        import base64
+        image_bytes = result.generated_images[0].image.image_bytes
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+        return {"success": True, "image_url": f"data:image/jpeg;base64,{b64}"}
+    except Exception as e:
+        # Frontend will fall back to free Pollinations.ai on success:false
+        print(f"[generate-image] Imagen 3 failed, frontend will use fallback: {e}")
+        return {"success": False, "error": str(e)[:150]}
+
+# ═══════════════════════════════════════════════════════════════════════════
 # CHAT HISTORY & USAGE TRACKING
 # ═══════════════════════════════════════════════════════════════════════════
 

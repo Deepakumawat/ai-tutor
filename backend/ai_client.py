@@ -8,7 +8,7 @@ GROQ_URL   = "https://api.groq.com/openai/v1"
 
 # ── Gemini (fallback — Search Grounding + Function Calling) ───────────────────
 GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 
 _groq = OpenAI(api_key=GROQ_KEY, base_url=GROQ_URL) if GROQ_KEY else None
 

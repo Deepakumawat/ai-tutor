@@ -77,6 +77,79 @@ function formatMessage(text) {
   blocks.forEach((b, i) => { result = result.replace(`%%B${i}%%`, b); });
   return result;
 }
+
+// ─── GeneratedImage — Imagen 3 (backend) with free Pollinations fallback ──────
+function GeneratedImage({ prompt }) {
+  const [url, setUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/api/generate-image`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!active) return;
+        if (data.success && data.image_url) setUrl(data.image_url);
+        else {
+          // Fallback to free Pollinations.ai (no key needed)
+          const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
+          setUrl(`https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
+        setUrl(`https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`);
+        setLoading(false);
+      });
+    return () => { active = false; };
+  }, [prompt]);
+
+  if (loading) {
+    return (
+      <div style={{ padding:"20px", background:"var(--bg-secondary)", border:"2px dashed #399aff", borderRadius:"16px", display:"flex", flexDirection:"column", alignItems:"center", margin:"12px 0", gap:"8px" }}>
+        <span style={{ fontSize:"28px", animation:"bounce 1s infinite" }}>🎨</span>
+        <span style={{ fontSize:"13px", fontWeight:600, color:"var(--text-secondary)" }}>Drawing: "{prompt}"…</span>
+      </div>
+    );
+  }
+  if (!url) return null;
+  return (
+    <div style={{ margin:"14px 0", borderRadius:"16px", overflow:"hidden", boxShadow:"0 6px 20px rgba(0,0,0,0.12)", border:"1px solid var(--border-color)" }}>
+      <img src={url} alt={prompt} style={{ width:"100%", display:"block" }}
+        onError={e => {
+          const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
+          const fb = `https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`;
+          if (e.currentTarget.src !== fb) e.currentTarget.src = fb;
+        }} />
+      <div style={{ background:"var(--bg-tertiary)", padding:"6px 12px", fontSize:"11px", color:"var(--text-secondary)", textAlign:"center" }}>
+        ✨ AI Illustration
+      </div>
+    </div>
+  );
+}
+
+// ─── RenderWithImages — splits already-formatted text on [IMAGE: ...] tags ────
+function RenderWithImages({ text }) {
+  if (!text) return null;
+  const parts = String(text).split(/(\[IMAGE:\s*.*?\])/g);
+  return (
+    <>
+      {parts.map((chunk, i) => {
+        const m = chunk.match(/^\[IMAGE:\s*(.*?)\]$/);
+        if (m) return <GeneratedImage key={i} prompt={m[1].trim()} />;
+        if (!chunk) return null;
+        return <span key={i} dangerouslySetInnerHTML={{ __html: formatMessage(chunk) }} />;
+      })}
+    </>
+  );
+}
+
 // ─── ChatDiagram — full, beautiful topic diagrams in chat ────────────────────
 function ChatDiagram({ topic, subject }) {
   const tl = (topic  || "").toLowerCase();
@@ -4354,8 +4427,9 @@ function SubjectPage({ profile, onHome }) {
                         <div style={{ fontSize:"14px", fontWeight:"700", color:"var(--text-primary)", marginBottom:"6px" }}>
                           🌍 Real-World Example
                         </div>
-                        <div style={{ fontSize:"14px", lineHeight:"1.6", color:"var(--text-primary)", paddingLeft:"16px", borderLeft:`3px solid ${BLUE}`, background:"rgba(57,154,255,0.05)", padding:"12px", borderRadius:"6px", ...getMessageStyles() }}
-                          dangerouslySetInnerHTML={{ __html: formatMessage(formatSectionForGrade(msg.sections.example)) }} />
+                        <div style={{ fontSize:"14px", lineHeight:"1.6", color:"var(--text-primary)", paddingLeft:"16px", borderLeft:`3px solid ${BLUE}`, background:"rgba(57,154,255,0.05)", padding:"12px", borderRadius:"6px", ...getMessageStyles() }}>
+                          <RenderWithImages text={formatSectionForGrade(msg.sections.example)} />
+                        </div>
                       </div>
                     )}
 
