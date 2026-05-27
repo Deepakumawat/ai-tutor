@@ -4393,8 +4393,9 @@ function SubjectPage({ profile, onHome }) {
                     </div>
                   </div>
                 ) : msg.sections ? (
-                  // Structured content with sections
-                  <div style={{ padding:"18px 20px" }}>
+                  // Structured content — text on the left, AI illustration on the right
+                  <div style={{ padding:"18px 20px", display:"flex", gap:"18px", flexWrap:"wrap", alignItems:"flex-start" }}>
+                    <div style={{ flex:"1 1 340px", minWidth:0 }}>
                     <div style={{ fontSize:"16px", fontWeight:"700", color:BLUE, marginBottom:"14px" }}>
                       📚 {msg.topic || "Lesson"}
                     </div>
@@ -4427,9 +4428,8 @@ function SubjectPage({ profile, onHome }) {
                         <div style={{ fontSize:"14px", fontWeight:"700", color:"var(--text-primary)", marginBottom:"6px" }}>
                           🌍 Real-World Example
                         </div>
-                        <div style={{ fontSize:"14px", lineHeight:"1.6", color:"var(--text-primary)", paddingLeft:"16px", borderLeft:`3px solid ${BLUE}`, background:"rgba(57,154,255,0.05)", padding:"12px", borderRadius:"6px", ...getMessageStyles() }}>
-                          <RenderWithImages text={formatSectionForGrade(msg.sections.example)} />
-                        </div>
+                        <div style={{ fontSize:"14px", lineHeight:"1.6", color:"var(--text-primary)", paddingLeft:"16px", borderLeft:`3px solid ${BLUE}`, background:"rgba(57,154,255,0.05)", padding:"12px", borderRadius:"6px", ...getMessageStyles() }}
+                          dangerouslySetInnerHTML={{ __html: formatMessage(formatSectionForGrade(msg.sections.example)) }} />
                       </div>
                     )}
 
@@ -4476,7 +4476,12 @@ function SubjectPage({ profile, onHome }) {
                         {voiceState === "speaking" ? "⏹️ Stop" : "🔊 Hear Explanation"}
                       </button>
                     </div>
+                    </div>{/* end left text column */}
 
+                    {/* RIGHT: AI illustration beside the lesson */}
+                    <div style={{ flex:"0 0 300px", maxWidth:"100%" }}>
+                      <GeneratedImage prompt={`${msg.topic || "lesson"} for children, colorful educational cartoon`} />
+                    </div>
                   </div>
                 ) : (
                   // Fallback plain text for practice questions / follow-up answers

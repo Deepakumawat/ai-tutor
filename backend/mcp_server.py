@@ -180,7 +180,7 @@ KEY CONCEPTS:
 • Concept 3
 
 REAL-WORLD EXAMPLE:
-[Practical example students can relate to. Include exactly ONE image on its own line in this format: [IMAGE: a short vivid description of a cute 3D cartoon illustration of the concept]]
+[Practical example students can relate to]
 
 SUMMARY:
 [Brief recap in 1-2 sentences]"""}
@@ -296,7 +296,7 @@ KEY CONCEPTS:
 • Concept 3
 
 REAL-WORLD EXAMPLE:
-[Practical example students can relate to. Include exactly ONE image on its own line in this format: [IMAGE: a short vivid description of a cute 3D cartoon illustration of the concept]]
+[Practical example students can relate to]
 
 SUMMARY:
 [Brief recap in 1-2 sentences]"""}
