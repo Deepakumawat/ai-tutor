@@ -78,58 +78,60 @@ function formatMessage(text) {
   return result;
 }
 
-// ─── GeneratedImage — Imagen 3 (backend) with free Pollinations fallback ──────
+// ─── GeneratedImage — big free illustration via Pollinations (reliable load) ──
 function GeneratedImage({ prompt }) {
-  const [url, setUrl] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const styled = `Cute 3D Pixar cartoon, educational illustration for kids, bright vibrant colors, clean simple background: ${prompt}`;
+  const buildUrl = (seed) =>
+    `https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=1024&height=768&seed=${seed}&nologo=true`;
 
+  const [src, setSrc] = useState(() => buildUrl(Math.floor(Math.random() * 100000)));
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const tries = useRef(0);
+
+  // Reset when the topic changes
   useEffect(() => {
-    let active = true;
-    fetch(`${API}/api/generate-image`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (!active) return;
-        if (data.success && data.image_url) setUrl(data.image_url);
-        else {
-          // Fallback to free Pollinations.ai (no key needed)
-          const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
-          setUrl(`https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`);
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
-        setUrl(`https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`);
-        setLoading(false);
-      });
-    return () => { active = false; };
+    tries.current = 0;
+    setLoaded(false);
+    setFailed(false);
+    setSrc(buildUrl(Math.floor(Math.random() * 100000)));
   }, [prompt]);
 
-  if (loading) {
-    return (
-      <div style={{ padding:"20px", background:"var(--bg-secondary)", border:"2px dashed #399aff", borderRadius:"16px", display:"flex", flexDirection:"column", alignItems:"center", margin:"12px 0", gap:"8px" }}>
-        <span style={{ fontSize:"28px", animation:"bounce 1s infinite" }}>🎨</span>
-        <span style={{ fontSize:"13px", fontWeight:600, color:"var(--text-secondary)" }}>Drawing: "{prompt}"…</span>
-      </div>
-    );
-  }
-  if (!url) return null;
   return (
-    <div style={{ margin:"14px 0", borderRadius:"16px", overflow:"hidden", boxShadow:"0 6px 20px rgba(0,0,0,0.12)", border:"1px solid var(--border-color)" }}>
-      <img src={url} alt={prompt} style={{ width:"100%", display:"block" }}
-        onError={e => {
-          const styled = `Chibi 3D Pixar-style educational illustration, bright colors, plain background: ${prompt}`;
-          const fb = `https://image.pollinations.ai/prompt/${encodeURIComponent(styled)}?width=768&height=432&nologo=true`;
-          if (e.currentTarget.src !== fb) e.currentTarget.src = fb;
-        }} />
-      <div style={{ background:"var(--bg-tertiary)", padding:"6px 12px", fontSize:"11px", color:"var(--text-secondary)", textAlign:"center" }}>
-        ✨ AI Illustration
-      </div>
+    <div style={{ borderRadius:"16px", overflow:"hidden", boxShadow:"0 6px 20px rgba(0,0,0,0.18)", border:"1px solid var(--border-color)", background:"var(--bg-secondary)" }}>
+      {!loaded && !failed && (
+        <div style={{ aspectRatio:"4 / 3", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"10px", border:"2px dashed #399aff", borderRadius:"16px" }}>
+          <span style={{ fontSize:"40px", animation:"bounce 1s infinite" }}>🎨</span>
+          <span style={{ fontSize:"13px", fontWeight:600, color:"var(--text-secondary)", textAlign:"center", padding:"0 12px" }}>
+            Drawing your picture…
+          </span>
+        </div>
+      )}
+      {failed && (
+        <div style={{ aspectRatio:"4 / 3", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"13px", color:"var(--text-secondary)" }}>
+          🖼️ Illustration unavailable
+        </div>
+      )}
+      <img
+        src={src}
+        alt={prompt}
+        loading="lazy"
+        style={{ width:"100%", display: loaded ? "block" : "none" }}
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          if (tries.current < 2) {
+            tries.current += 1;
+            setSrc(buildUrl(Math.floor(Math.random() * 100000)));
+          } else {
+            setFailed(true);
+          }
+        }}
+      />
+      {loaded && (
+        <div style={{ background:"var(--bg-tertiary)", padding:"6px 12px", fontSize:"11px", color:"var(--text-secondary)", textAlign:"center" }}>
+          ✨ AI Illustration
+        </div>
+      )}
     </div>
   );
 }
@@ -4478,9 +4480,9 @@ function SubjectPage({ profile, onHome }) {
                     </div>
                     </div>{/* end left text column */}
 
-                    {/* RIGHT: AI illustration beside the lesson */}
-                    <div style={{ flex:"0 0 300px", maxWidth:"100%" }}>
-                      <GeneratedImage prompt={`${msg.topic || "lesson"} for children, colorful educational cartoon`} />
+                    {/* RIGHT: big AI illustration beside the lesson */}
+                    <div style={{ flex:"0 0 420px", maxWidth:"100%" }}>
+                      <GeneratedImage prompt={msg.topic || "lesson"} />
                     </div>
                   </div>
                 ) : (
