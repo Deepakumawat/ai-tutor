@@ -3,6 +3,7 @@ import { GRADES, SUBJECTS, getCurriculumTopic, GRADE_TOPICS } from "./constants.
 import UsageCounter from "./UsageCounter";
 import ChatHistory from "./ChatHistory";
 import { ThemeToggle } from "./components/ThemeToggle";
+import Landing from "./Landing";
 
 // ─── Inline styles / design tokens ───────────────────────────────────────────
 const FONT = "'Nunito', sans-serif";
@@ -4693,12 +4694,19 @@ function SubjectPage({ profile, onHome }) {
 // ─── MAIN APP COMPONENT ─────────────────────────────────────────────────────────
 export default function App() {
   const [profile, setProfile] = useState(null);
+  const [seenLanding, setSeenLanding] = useState(() => !!localStorage.getItem("ai_tutor_seen_landing"));
 
   const handleStart = (p) => {
     console.log("App received profile:", p);
     localStorage.setItem("ai_tutor_profile", JSON.stringify(p));
     setProfile(p);
   };
+
+  if (!seenLanding && !profile) {
+    return (
+      <Landing onEnter={() => { localStorage.setItem("ai_tutor_seen_landing", "1"); setSeenLanding(true); }} />
+    );
+  }
 
   if (!profile) {
     return (
