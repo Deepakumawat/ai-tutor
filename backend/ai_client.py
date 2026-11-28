@@ -1,80 +1,160 @@
+"""Groq-primary / Gemini-fallback LLM client.
+
+Drop-in replacement for the OpenAI client: `client.chat.completions.create(...)`
+returns an object with `.choices[0].message.content`, whichever provider answered.
+
+Order:
+  1. Groq GROQ_MODEL        (primary  — fast, free tier)
+  2. Groq GROQ_FALLBACK     (smaller Groq model, separate quota)
+  3. Gemini GEMINI_MODEL    (fallback — different vendor, survives a Groq outage)
+
+Model IDs are env-overridable so a future retirement is a dashboard change,
+not a code change. Defaults are the models that are generally available as of
+2026-11-28:
+  - Groq retired llama-3.3-70b-versatile / llama-3.1-8b-instant on 2026-08-16
+    and gemma2-9b-it on 2025-10-08. Replacements: openai/gpt-oss-120b / -20b.
+  - Google shut down gemini-2.0-flash on 2026-06-01 and gemini-1.5-pro earlier.
+    Replacement: gemini-3.6-flash.
+"""
+
 import os
 from openai import OpenAI
 
-# ── Groq (primary — fast & free) ──────────────────────────────────────────────
-GROQ_KEY   = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_URL   = "https://api.groq.com/openai/v1"
+# ── Config (all env-overridable) ──────────────────────────────────────────────
+GROQ_KEY      = (os.getenv("GROQ_API_KEY") or "").strip()
+GROQ_MODEL    = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_FALLBACK = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b")
+GROQ_URL      = "https://api.groq.com/openai/v1"
 
-# ── Gemini (fallback — Search Grounding + Function Calling) ───────────────────
-GEMINI_KEY   = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+GEMINI_KEY    = (os.getenv("GEMINI_API_KEY") or "").strip()
+GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+# Was 10s, which truncated long lesson/debug generations on a large model.
+DEFAULT_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
+
+# Try the primary first, then the smaller model (separate daily quota).
+_GROQ_MODELS = [m for m in (GROQ_MODEL, GROQ_FALLBACK) if m]
 
 _groq = OpenAI(api_key=GROQ_KEY, base_url=GROQ_URL) if GROQ_KEY else None
 
-# Native Gemini client (new google-genai SDK)
 _gemini = None
 try:
     from google import genai as _genai
     from google.genai import types as _gtypes
     if GEMINI_KEY:
         _gemini = _genai.Client(api_key=GEMINI_KEY)
-        print("[ai_client] Gemini 2.0 Flash + Search Grounding ready")
+        print(f"[ai_client] Gemini fallback ready ({GEMINI_MODEL})")
 except ImportError:
-    print("[ai_client] google-genai not installed — Gemini unavailable")
+    print("[ai_client] google-genai not installed — Gemini fallback unavailable")
 except Exception as e:
     print(f"[ai_client] Gemini init error: {e}")
 
-
-def _gemini_compat_response(text):
-    """Wrap Gemini text in OpenAI-style response so callers need no changes."""
-    class _Msg:
-        content = text
-        role    = "assistant"
-    class _Choice:
-        message       = _Msg()
-        finish_reason = "stop"
-    class _Resp:
-        choices = [_Choice()]
-    return _Resp()
+if _groq is None:
+    print("[ai_client] WARNING: GROQ_API_KEY not set — primary provider disabled")
 
 
-def _gemini_generate(prompt: str) -> str:
-    config = _gtypes.GenerateContentConfig(
-        tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())]
-    )
+def _is_retryable(err: Exception) -> bool:
+    """Rate limit / transient / dead-model errors: try the next model."""
+    msg = str(err).lower()
+    return any(s in msg for s in (
+        "rate_limit", "rate limit", "429", "quota", "tokens per day", "tpd",
+        "decommissioned", "model_not_found", "does not exist", "not found",
+        "404", "500", "502", "503", "overloaded", "timeout", "timed out",
+    ))
+
+
+# ── OpenAI-shaped response wrapper ────────────────────────────────────────────
+class _Msg:
+    __slots__ = ("content", "role")
+    def __init__(self, content, role="assistant"):
+        self.content = content
+        self.role = role
+
+
+class _Choice:
+    __slots__ = ("message", "index", "finish_reason")
+    def __init__(self, content):
+        self.message = _Msg(content)
+        self.index = 0
+        self.finish_reason = "stop"
+
+
+class _Resp:
+    __slots__ = ("choices", "model")
+    def __init__(self, content, model):
+        self.choices = [_Choice(content)]
+        self.model = model
+
+
+def _gemini_generate(messages, **kwargs):
+    """Call Gemini with OpenAI-style messages, return an OpenAI-shaped object."""
+    if _gemini is None:
+        raise RuntimeError("Gemini not configured — set GEMINI_API_KEY and install google-genai")
+
+    system_parts = [m["content"] for m in messages
+                    if m.get("role") == "system" and isinstance(m.get("content"), str)]
+    contents = []
+    for m in messages:
+        role = m.get("role", "user")
+        if role == "system":
+            continue
+        if role == "assistant":
+            role = "model"
+        if role not in ("user", "model"):
+            role = "user"
+        contents.append({"role": role, "parts": [{"text": str(m.get("content", ""))}]})
+    if not contents:
+        contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+
+    cfg = {}
+    if system_parts:
+        cfg["system_instruction"] = "\n\n".join(system_parts)
+    if kwargs.get("temperature") is not None:
+        cfg["temperature"] = kwargs["temperature"]
+    if kwargs.get("max_tokens"):
+        cfg["max_output_tokens"] = kwargs["max_tokens"]
+
     resp = _gemini.models.generate_content(
         model=GEMINI_MODEL,
-        contents=prompt,
-        config=config,
+        contents=contents,
+        config=_gtypes.GenerateContentConfig(**cfg) if cfg else None,
     )
-    return resp.text
+    return _Resp(resp.text or "", GEMINI_MODEL)
 
 
-# ── Drop-in client (client.chat.completions.create) ───────────────────────────
+# ── Drop-in client ────────────────────────────────────────────────────────────
 class _Completions:
     def create(self, *, model=None, messages=None, timeout=None, **kwargs):
+        """`model` is accepted and ignored — this client picks the model."""
         msgs = messages or []
+        kwargs.pop("model", None)
+        last_err = None
 
-        if _groq:
+        if _groq is not None:
+            for name in _GROQ_MODELS:
+                try:
+                    return _groq.chat.completions.create(
+                        model=name,
+                        messages=msgs,
+                        timeout=timeout or DEFAULT_TIMEOUT,
+                        **kwargs,
+                    )
+                except Exception as e:
+                    last_err = e
+                    print(f"[ai_client] Groq {name} failed ({type(e).__name__}: {e}) — next")
+                    if not _is_retryable(e):
+                        break
+
+        if _gemini is not None:
             try:
-                return _groq.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=msgs,
-                    timeout=timeout or 10,
-                    **kwargs,
-                )
+                print(f"[ai_client] Falling back to Gemini {GEMINI_MODEL}")
+                return _gemini_generate(msgs, **kwargs)
             except Exception as e:
-                print(f"[ai_client] Groq failed ({type(e).__name__}), using Gemini...")
+                last_err = e
+                print(f"[ai_client] Gemini fallback failed: {e}")
 
-        if _gemini:
-            prompt = "\n".join(
-                f"{m['role'].upper()}: {m['content']}"
-                for m in msgs
-                if isinstance(m.get("content"), str)
-            )
-            return _gemini_compat_response(_gemini_generate(prompt))
-
+        if last_err is not None:
+            raise last_err
         raise RuntimeError("No AI provider — set GROQ_API_KEY or GEMINI_API_KEY")
 
 
@@ -83,80 +163,35 @@ class _Chat:
 
 
 class FallbackClient:
-    """
-    Drop-in OpenAI client replacement.
-    Primary : Groq llama-3.3-70b  (fast, free)
-    Fallback : Gemini 2.0 Flash   (search grounding, function calling)
-    """
+    """Drop-in OpenAI client replacement. Groq primary, Gemini fallback."""
     chat = _Chat()
-
-
-# ── Stateful ChatSession (Interactions API) ───────────────────────────────────
-class ChatSession:
-    """Multi-turn conversation with automatic memory."""
-    def __init__(self, system_prompt: str = "You are a helpful AI assistant."):
-        self.history = [{"role": "system", "content": system_prompt}]
-        self._gemini_chat = _gemini.chats.create(model=GEMINI_MODEL) if _gemini else None
-
-    def send(self, user_message: str) -> str:
-        self.history.append({"role": "user", "content": user_message})
-
-        if _groq:
-            try:
-                resp = _groq.chat.completions.create(
-                    model=GROQ_MODEL,
-                    messages=self.history,
-                    timeout=10,
-                )
-                reply = resp.choices[0].message.content
-                self.history.append({"role": "assistant", "content": reply})
-                return reply
-            except Exception as e:
-                print(f"[ChatSession] Groq failed: {e}")
-
-        if self._gemini_chat:
-            resp  = self._gemini_chat.send_message(user_message)
-            reply = resp.text
-            self.history.append({"role": "assistant", "content": reply})
-            return reply
-
-        raise RuntimeError("No AI provider available")
-
-    def clear(self):
-        self.history = self.history[:1]
-        if _gemini:
-            self._gemini_chat = _gemini.chats.create(model=GEMINI_MODEL)
-
-
-# ── Function Calling helper ───────────────────────────────────────────────────
-def call_with_tools(prompt: str, tools: list, system: str = "") -> str:
-    """Run prompt with Gemini function calling; falls back to Groq plain text."""
-    if _gemini:
-        try:
-            from google.genai import types as _gt
-            config = _gt.GenerateContentConfig(
-                tools=tools,
-                system_instruction=system or "You are a helpful AI assistant.",
-            )
-            resp = _gemini.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
-                config=config,
-            )
-            return resp.text
-        except Exception as e:
-            print(f"[call_with_tools] Gemini error: {e}")
-
-    if _groq:
-        resp = _groq.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=15,
-        )
-        return resp.choices[0].message.content
-
-    raise RuntimeError("No provider for function calling")
 
 
 # Singleton — import this everywhere
 client = FallbackClient()
+
+
+# ── Back-compat shims (nothing in these repos calls these today) ─────────────
+class ChatSession:
+    """Multi-turn conversation with automatic memory."""
+    def __init__(self, system_prompt: str = "You are a helpful AI assistant."):
+        self.history = [{"role": "system", "content": system_prompt}]
+
+    def send(self, user_message: str) -> str:
+        self.history.append({"role": "user", "content": user_message})
+        resp = client.chat.completions.create(messages=self.history)
+        reply = resp.choices[0].message.content
+        self.history.append({"role": "assistant", "content": reply})
+        return reply
+
+    def clear(self):
+        self.history = self.history[:1]
+
+
+def call_with_tools(prompt: str, tools: list = None, system: str = "") -> str:
+    """Kept for API compatibility; routes through the normal fallback chain."""
+    msgs = []
+    if system:
+        msgs.append({"role": "system", "content": system})
+    msgs.append({"role": "user", "content": prompt})
+    return client.chat.completions.create(messages=msgs).choices[0].message.content
