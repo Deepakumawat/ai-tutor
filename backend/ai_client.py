@@ -32,6 +32,14 @@ GEMINI_MODEL  = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 # Was 10s, which truncated long lesson/debug generations on a large model.
 DEFAULT_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "60"))
 
+# gpt-oss models are reasoning models: they spend completion tokens on a
+# hidden `reasoning` field before emitting any answer, and that spend counts
+# against max_tokens. Several call sites here use small budgets (200-500),
+# where default-effort reasoning eats a meaningful slice of the answer.
+# "low" cuts reasoning to ~30 chars instead of ~130-230. Set
+# GROQ_REASONING_EFFORT="" to disable sending the param at all.
+GROQ_REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low").strip()
+
 # Try the primary first, then the smaller model (separate daily quota).
 _GROQ_MODELS = [m for m in (GROQ_MODEL, GROQ_FALLBACK) if m]
 
@@ -133,11 +141,16 @@ class _Completions:
         if _groq is not None:
             for name in _GROQ_MODELS:
                 try:
+                    extra = dict(kwargs)
+                    # Only gpt-oss accepts reasoning_effort; sending it to a
+                    # non-reasoning model would be rejected.
+                    if GROQ_REASONING_EFFORT and "gpt-oss" in name:
+                        extra.setdefault("reasoning_effort", GROQ_REASONING_EFFORT)
                     return _groq.chat.completions.create(
                         model=name,
                         messages=msgs,
                         timeout=timeout or DEFAULT_TIMEOUT,
-                        **kwargs,
+                        **extra,
                     )
                 except Exception as e:
                     last_err = e
